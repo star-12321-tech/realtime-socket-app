@@ -1,4 +1,4 @@
-import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import React, { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 // 📋 Strict Type Contracts for Data Contracts
@@ -8,42 +8,74 @@ interface UserProfile {
 }
 
 interface ChatMessage {
-  userName: string;
+  userId: string;
   text: string;
   timestamp?: string;
 }
 
 // Initialize persistent Socket link pointing to your Express backend port
-const socket: Socket = io('http://localhost:5050'); // Match the backend port
+const socket: Socket = io('http://localhost:5050');
 
 const App: React.FC = () => {
   // --- Authentication UI State Ecosystem ---
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [isRegistering, setIsRegistering] = useState<boolean>(false);
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authError, setAuthError] = useState<string>('');
+  
+  // Clean Hydration Check: Immediately check local browser cache for user status on initialization
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const savedUser = localStorage.getItem('app_user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
 
   // --- Real-Time Chat UI State Ecosystem ---
   const [messageText, setMessageText] = useState<string>('');
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  
+  // Clean History Hydration: Pull messages from local storage cache so Window B is persistent on boot
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>(() => {
+    const savedHistory = localStorage.getItem('chat_history');
+    return savedHistory ? JSON.parse(savedHistory) : [];
+  });
 
-  // Hydrate user authentication state from local browser cache storage on component mount
+  // Lifecycle Hook 1: Manage Real-Time Web-Socket Broadcast Pipes
   useEffect(() => {
-    const savedUser = localStorage.getItem('app_user');
-    if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
-    }
-
-    // Set up real-time socket packet listeners
     socket.on('message:broadcast', (message: ChatMessage) => {
-      setChatHistory((prev) => [...prev, message]);
+      console.log("📡 Client Received Live Event Payload:", message);
+      setChatHistory((prevHistory) => [...prevHistory, message]);
     });
 
     return () => {
       socket.off('message:broadcast');
     };
-  }, []);
+  }, []); 
+
+  // Lifecycle Hook 2: Database History Hydration (Triggers instantly upon login verification)
+  useEffect(() => {
+    const fetchRecentHistory = async () => {
+      if (!currentUser) return; // Halt execution if the user is unauthenticated
+
+      try {
+        const response = await fetch('http://localhost:5050/api/messages/recent', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('auth_token')}` // Industry standard token verification pass
+          }
+        });
+
+        if (!response.ok) throw new Error('Database history synchronization drop.');
+        
+        const pastMessages: ChatMessage[] = await response.json();
+        setChatHistory(pastMessages); // Seamlessly populate your chat frame container on screen
+      } catch (err: any) {
+        console.error('⚠️ Could not hydrate recent context history from server:', err.message);
+      }
+    };
+
+    fetchRecentHistory();
+  }, [currentUser]); // React watches this value; updates the viewport text strings instantly when login resolves successfully
+
 
   // --- Identity Network Event Controllers ---
   const handleAuthSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -55,7 +87,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Toggle target gateway route dynamically based on user toggle state
     const targetEndpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
 
     try {
@@ -73,10 +104,9 @@ const App: React.FC = () => {
 
       if (isRegistering) {
         alert('Account provisioned successfully! Proceeding to login phase.');
-        setIsRegistering(false); // Automatically pivot view back to login layout block
+        setIsRegistering(false); 
         setPassword('');
       } else {
-        // Securely capture and store stateless authentication payload metrics
         localStorage.setItem('auth_token', data.token);
         localStorage.setItem('app_user', JSON.stringify(data.user));
         setCurrentUser(data.user);
@@ -89,17 +119,18 @@ const App: React.FC = () => {
   const handleLogout = (): void => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('app_user');
+    localStorage.removeItem('chat_history'); // Wipe messages cache on clean exit
     setCurrentUser(null);
     setChatHistory([]);
   };
 
   // --- Chat Stream Transmission Controllers ---
-  const handleChatSubmit = (e: FormEvent<HTMLFormElement>): void => {
+  const handleChatSubmit = (e: React.FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
     if (!messageText.trim() || !currentUser) return;
 
     const payload: ChatMessage = {
-      userName: currentUser.username,
+      userId: currentUser.username, 
       text: messageText
     };
 
@@ -118,9 +149,9 @@ const App: React.FC = () => {
           <div style={{ marginBottom: '10px' }}>
             <label style={{ display: 'block', marginBottom: '5px' }}>Username:</label>
             <input 
-              type="username" 
+              type="text" 
               value={username} 
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)} 
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)} 
               style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
             />
           </div>
@@ -129,7 +160,7 @@ const App: React.FC = () => {
             <input 
               type="password" 
               value={password} 
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} 
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} 
               style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
             />
           </div>
@@ -142,7 +173,7 @@ const App: React.FC = () => {
           onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} 
           style={{ width: '100%', marginTop: '10px', background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline' }}
         >
-          {isRegistering ? 'Already have an profile workspace? Sign In' : "Don't have an profile? Register Here"}
+          {isRegistering ? 'Already have a profile workspace? Sign In' : "Don't have a profile? Register Here"}
         </button>
       </div>
     );
@@ -156,10 +187,10 @@ const App: React.FC = () => {
       </div>
       <p>Authenticated workspace owner: <strong>{currentUser?.username}</strong></p>
 
-      <div style={{ border: '1px solid #ccc', height: '300px', overflowY: 'scroll', padding: '10px', marginBottom: '10px', borderRadius: '4px' }}>
+      <div style={{ border: '1px solid #ccc', height: '500px', overflowY: 'scroll', padding: '10px', marginBottom: '10px', borderRadius: '4px' }}>
         {chatHistory.map((msg, idx) => (
-          <div key={idx} style={{ margin: '8px 0', borderBottom: '1px paddingless #f9f9f9' }}>
-            <span style={{ color: '#555', fontWeight: 'bold' }}>{msg.userName}:</span> {msg.text}
+          <div key={idx} style={{ margin: '8px 0', paddingBottom: '5px', borderBottom: '1px solid #f0f0f0' }}>
+            <span style={{ color: '#007bff', fontWeight: 'bold' }}>{msg.userId}:</span> {msg.text}
           </div>
         ))}
       </div>
@@ -168,7 +199,7 @@ const App: React.FC = () => {
         <input 
           type="text" 
           value={messageText} 
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setMessageText(e.target.value)} 
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMessageText(e.target.value)} 
           placeholder="Transmit runtime string event payload..." 
           style={{ flexGrow: 1, padding: '10px', borderRadius: '4px 0 0 4px', border: '1px solid #ccc' }}
         />
