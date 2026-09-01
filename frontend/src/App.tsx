@@ -14,7 +14,7 @@ interface ChatMessage {
 }
 
 // Initialize persistent Socket link pointing to your Express backend port
-const socket: Socket = io('http://localhost:5050');
+const socket: Socket = io('http://192.168.1.51:5050');
 
 const App: React.FC = () => {
   // --- Authentication UI State Ecosystem ---

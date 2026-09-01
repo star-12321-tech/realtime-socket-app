@@ -1,64 +1,40 @@
 import express, { Application, Request, Response } from 'express';
 import { createServer, Server as HTTPServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import { Pool } from 'pg'; // Replaced mysql2 with type-safe pg pool instance
+import mysql, { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 const app: Application = express();
 
-// Configuration hooks to handle local dev port 5173 alongside your cloud Netlify routes
-const ALLOWED_ORIGINS = [
-  'http://localhost:5173',
-  'https://netlify.app' // Ready for your production site updates
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Blocked by security boundary layer policies (CORS).'));
-    }
-  }
-}));
+// 🌐 Configured CORS to accept local requests from your machine and any external Wi-Fi IP
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const httpServer: HTTPServer = createServer(app);
 const io: SocketIOServer = new SocketIOServer(httpServer, {
   cors: { 
-    origin: ALLOWED_ORIGINS, 
+    origin: "*", // Allows devices on your Wi-Fi network to link with the Socket stream
     methods: ["GET", "POST"] 
   }
 });
 
-// Configure Secure Encrypted PostgreSQL Connection Pool pointing to your Supabase Cloud
-const dbPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false // Required for secure handshakes with remote databases
-  }
+// Configure Secure Database Pool
+const dbPool: Pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'realtime_db'
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_secure_random_string_Star_12321';
 
-// 📋 Strict Postgres Interface Models
-interface UserRow {
+// 📋 Strict Type Contracts
+interface UserRow extends RowDataPacket {
   id: number;
   username: string;
   password_hash: string;
-  created_at: Date;
-}
-
-interface MessageRow {
-  id: number;
-  message_text: string;
-  created_at: Date;
-  username: string;
 }
 
 /**
@@ -72,28 +48,26 @@ app.post('/api/auth/register', async (req: Request, res: Response): Promise<Resp
   }
 
   try {
-    // MySQL '?' changes to PostgreSQL parameter token '$1'
-    const existingUsersCheck = await dbPool.query<UserRow>(
-      'SELECT id FROM users WHERE username = $1 LIMIT 1', 
+    const [existingUsers] = await dbPool.query<UserRow[]>(
+      'SELECT id FROM users WHERE username = ? LIMIT 1', 
       [username]
     );
 
-    if (existingUsersCheck.rows.length > 0) {
+    if (existingUsers.length > 0) {
       return res.status(409).json({ error: 'An account with this username already exists.' });
     }
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // SQL INSERT operations query adjustments using indexed identifiers
-    const result = await dbPool.query<UserRow>(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id',
+    const [result] = await dbPool.query<ResultSetHeader>(
+      'INSERT INTO users (username, password_hash) VALUES (?, ?)',
       [username, passwordHash]
     );
 
     return res.status(201).json({ 
       message: 'User account provisioned successfully.', 
-      userId: result.rows[0].id // PostgreSQL uses RETURNING clauses instead of insertId
+      userId: result.insertId 
     });
   } catch (error: any) {
     console.error('❌ Registration System Failure:', error.message); 
@@ -112,11 +86,11 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<Respons
   }
 
   try {
-    const result = await dbPool.query<UserRow>(
-      'SELECT * FROM users WHERE username = $1 LIMIT 1', 
+    const [users] = await dbPool.query<UserRow[]>(
+      'SELECT * FROM users WHERE username = ? LIMIT 1', 
       [username]
     );
-    const user = result.rows[0];
+    const user = users[0];
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid identification credentials provided.' });
@@ -144,6 +118,13 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<Respons
   }
 });
 
+interface MessageRow extends RowDataPacket {
+  id: number;
+  message_text: string;
+  created_at: Date;
+  username: string;
+}
+
 /**
  * 📡 FETCH ALL MESSAGES
  */
@@ -156,9 +137,9 @@ app.get('/api/messages', async (_req: Request, res: Response): Promise<Response>
       ORDER BY m.created_at ASC
     `;
     
-    const result = await dbPool.query<MessageRow>(query);
+    const [messages] = await dbPool.query<MessageRow[]>(query);
     
-    return res.status(200).json(result.rows);
+    return res.status(200).json(messages);
   } catch (error: any) {
     console.error('❌ Database Messages Query Failure:', error.message);
     return res.status(500).json({ error: 'Internal system fault fetching database history rows.' });
@@ -166,22 +147,21 @@ app.get('/api/messages', async (_req: Request, res: Response): Promise<Response>
 });
 
 /**
- * 📡 FETCH RECENT HISTORY (LAST 100 HOURS)
- * Replaced MySQL's DATE_SUB syntax with standard PostgreSQL INTERVAL syntax
+ * 📡 FETCH RECENT HISTORY
  */
 app.get('/api/messages/recent', async (_req: Request, res: Response): Promise<Response> => {
   try {
     const query = `
-      SELECT m.id, m.message_text AS text, u.username AS "userId", m.created_at
+      SELECT m.id, m.message_text AS text, u.username AS userId, m.created_at
       FROM messages m
       JOIN users u ON m.user_id = u.id
-      WHERE m.created_at >= NOW() - INTERVAL '100 hours'
+      WHERE m.created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
       ORDER BY m.created_at ASC
     `;
     
-    const result = await dbPool.query<MessageRow>(query);
+    const [messages] = await dbPool.query<MessageRow[]>(query);
     
-    return res.status(200).json(result.rows);
+    return res.status(200).json(messages);
   } catch (error: any) {
     console.error('❌ Failed to fetch recent database history:', error.message);
     return res.status(500).json({ error: 'Internal system fault fetching recent logs.' });
@@ -198,20 +178,19 @@ io.on('connection', (socket) => {
 
   socket.on('message:send', async (payload: ChatMessagePayload) => {
     try {
-      const userCheck = await dbPool.query<UserRow>(
-        'SELECT id FROM users WHERE username = $1 LIMIT 1',
+      const [users] = await dbPool.query<UserRow[]>(
+        'SELECT id FROM users WHERE username = ? LIMIT 1',
         [payload.userId]
       );
       
-      const user = userCheck.rows[0];
+      const user = users[0];
       if (!user) {
         console.error(`⚠️ Socket operation dropped: user context not found for ${payload.userId}`);
         return;
       }
 
-      // Safe parameter substitution array mapping via $1, $2, $3 variables
       await dbPool.query(
-        'INSERT INTO messages (socket_id, user_id, message_text) VALUES ($1, $2, $3)',
+        'INSERT INTO messages (socket_id, user_id, message_text) VALUES (?, ?, ?)',
         [socket.id, user.id, payload.text]
       );
 
@@ -233,6 +212,8 @@ io.on('connection', (socket) => {
   });
 });
 
-// Configure port monitoring to support dynamic deployments (Render maps to process.env.PORT automatically)
-const PORT = process.env.PORT || 5050;
-httpServer.listen(PORT, () => console.log(`🔥 Auth & Realtime engine live at http://localhost:${PORT}`));
+// 📡 Added the '0.0.0.0' address binding tag to receive external inbound Wi-Fi requests cleanly
+const PORT = 5050;
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`🔥 MySQL Realtime engine live across local Wi-Fi at http://0.0.0:${PORT}`);
+});
