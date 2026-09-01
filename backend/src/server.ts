@@ -160,7 +160,7 @@ app.get('/api/messages/recent', async (_req: Request, res: Response): Promise<Re
       SELECT m.id, m.message_text AS text, u.username AS userId, m.created_at
       FROM messages m
       JOIN users u ON m.user_id = u.id
-      WHERE m.created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+      WHERE m.created_at >= DATE_SUB(NOW(), INTERVAL 100 HOUR)
       ORDER BY m.created_at ASC
     `;
     

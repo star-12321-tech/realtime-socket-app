@@ -180,14 +180,14 @@ const App: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: '600px', margin: '5px auto', padding: '20px', fontFamily: 'sans-serif' }}>
+    <div style={{ width: '800px', margin: '5px auto', padding: '20px', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>💬 Real-Time Control Terminal</h2>
         <button onClick={handleLogout} style={{ padding: '5px 10px', backgroundColor: '#dc3545', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Logout</button>
       </div>
       <p>Authenticated workspace owner: <strong>{currentUser?.username}</strong></p>
 
-      <div style={{ border: '1px solid #ccc', height: '500px', overflowY: 'scroll', padding: '10px', marginBottom: '10px', borderRadius: '4px' }}>
+      <div style={{ border: '1px solid #ccc', height: '800px', overflowY: 'scroll', padding: '10px', marginBottom: '10px', borderRadius: '4px' }}>
         {chatHistory.map((msg, idx) => (
           <div key={idx} style={{ margin: '8px 0', paddingBottom: '5px', borderBottom: '1px solid #f0f0f0' }}>
             <span style={{ color: '#007bff', fontWeight: 'bold' }}>{msg.userId}:</span> {msg.text}
